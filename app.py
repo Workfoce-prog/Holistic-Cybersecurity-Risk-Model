@@ -295,7 +295,9 @@ with tabs[4]:
 
 with tabs[5]:
     st.subheader("About")
-    st.markdown(\"\"\"
+ with tabs[5]:
+    st.subheader("About")
+    st.markdown("""
 **What this app does**  
 - Ingests CSVs (or uses sample data) for file/ACL/events/security/backup/audit.
 - Runs deterministic detection rules.
@@ -307,4 +309,4 @@ with tabs[5]:
 
 **Next steps**  
 - Add enterprise-specific rules, SOAR actions, and direct SIEM connectors.
-\"\"\")
+""")
