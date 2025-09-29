@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
-import plotly.express as px
+
 
 st.set_page_config(page_title="Holistic Cybersecurity Risk Model", page_icon="🛡️", layout="wide")
 st.title("🛡️ Holistic Cybersecurity Risk Model (CSV-only)")
