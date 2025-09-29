@@ -1,9 +1,16 @@
+
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
 
+# Plotly is optional; we fall back to st.bar_chart if it's not available
+try:
+    import plotly.express as px
+    HAVE_PLOTLY = True
+except Exception:
+    HAVE_PLOTLY = False
 
 st.set_page_config(page_title="Holistic Cybersecurity Risk Model", page_icon="🛡️", layout="wide")
 st.title("🛡️ Holistic Cybersecurity Risk Model (CSV-only)")
@@ -12,6 +19,7 @@ DATA_DIR = Path(__file__).parent / "data"
 
 # ---------- Helpers ----------
 def load_csv_safe(path: Path) -> pd.DataFrame:
+    """Read CSV if present; return empty DF if missing or unreadable."""
     if not path.exists():
         return pd.DataFrame()
     try:
@@ -21,6 +29,7 @@ def load_csv_safe(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 def load_all_sources(uploads: dict) -> dict:
+    """Load uploaded CSVs or fall back to ./data/*.csv files."""
     data = {}
     for name in [
         "file_catalog",
@@ -43,6 +52,7 @@ def load_all_sources(uploads: dict) -> dict:
     return data
 
 def ensure_types(d: dict) -> dict:
+    """Normalize datatypes used in rules."""
     if not d["file_catalog"].empty:
         fc = d["file_catalog"].copy()
         for c in ["created_ts", "last_modified_ts"]:
@@ -213,7 +223,8 @@ if not data["security_signals"].empty:
         )
         has_unmanaged = um
     for fid in macro["file_id"].unique():
-        if bool(has_unmanaged.reindex([fid]).fillna(True).iloc[0]):  # conservative if unknown
+        # conservative: treat as unmanaged if unknown
+        if bool(has_unmanaged.reindex([fid]).fillna(True).iloc[0]):
             detections.append({
                 "file_id": fid,
                 "rule": "macro_external",
@@ -224,7 +235,7 @@ if not data["security_signals"].empty:
 # R7: unencrypted at rest on sensitive
 if not data["file_catalog"].empty and "encryption_at_rest" in data["file_catalog"].columns:
     unenc = data["file_catalog"]
-    unenc = unenc[(~unenc["encryption_at_rest"]) & (unenc["classification"].isin(["Confidential", "Restricted"]))]
+    unenc = unenc[(~unenc["encryption_at_rest"]) & (unenc["classification"].isin(["Confidential", "Restricted"])))]
     for fid in unenc["file_id"].unique():
         detections.append({
             "file_id": fid,
@@ -334,6 +345,7 @@ if not det_df.empty:
     det_df["ctx_mult"] = 1.0
     det_df["score_i"] = (det_df["base"] * det_df["sens_mult"] * det_df["ctx_mult"]).clip(upper=100)
 
+    # Noisy-OR aggregation of rule scores to a file score
     agg = det_df.groupby("file_id")["score_i"].apply(lambda s: 1 - np.prod(1 - s / 100.0))
     file_scores = agg.reset_index().rename(columns={"score_i": "score"})
     file_scores["score"] = (file_scores["score"] * 100).round(1)
@@ -380,8 +392,11 @@ with tabs[2]:
             rag_counts = file_scores["RAG"].value_counts().reset_index()
             rag_counts.columns = ["RAG", "count"]
             if not rag_counts.empty:
-                fig = px.pie(rag_counts, names="RAG", values="count", hole=0.4)
-                st.plotly_chart(fig, use_container_width=True)
+                if HAVE_PLOTLY:
+                    fig = px.pie(rag_counts, names="RAG", values="count", hole=0.4)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.bar_chart(rag_counts.set_index("RAG"))
         st.markdown("**User roll-up**")
         st.dataframe(user_scores.head(50), use_container_width=True)
 
