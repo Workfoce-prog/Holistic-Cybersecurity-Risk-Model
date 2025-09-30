@@ -110,6 +110,70 @@ def rag_label(x: float, red: float, amber: float) -> str:
         return "Amber"
     return "Green"
 
+# --- Demo dataset (populate app even when ./data is empty) ---
+def build_demo_data() -> dict:
+    fc = pd.DataFrame([
+        ["F1","/hr/salary.xlsx","U1","sharepoint","2024-12-15T10:00:00","2025-01-05T09:00:00","Restricted",False,False,False,0],
+        ["F2","/finance/budget.xlsx","U2","sharepoint","2024-12-01T09:00:00","2025-01-06T11:00:00","Confidential",False,False,False,0],
+        ["F3","/eng/roadmap.docx","U3","onedrive","2024-11-01T09:00:00","2025-01-03T14:00:00","Internal",True,False,False,0],
+        ["F4","/public/press.pdf","U4","sharepoint","2024-10-01T09:00:00","2025-01-04T08:00:00","Public",True,False,False,0],
+        ["F5","/legal/case.pdf","U5","box","2024-12-20T12:00:00","2025-01-06T12:00:00","Confidential",False,True,True,35],
+    ], columns=["file_id","path","owner_user_id","system","created_ts","last_modified_ts","classification",
+                "encryption_at_rest","retention_days_exceeded","deleted_soft","days_deleted"])
+    fc["created_ts"] = pd.to_datetime(fc["created_ts"])
+    fc["last_modified_ts"] = pd.to_datetime(fc["last_modified_ts"])
+
+    acl = pd.DataFrame([
+        ["F1","G-HR","group","read",False,"internal","2024-12-15T10:00:00"],
+        ["F1","U10","user","write",False,"internal","2025-01-01T09:00:00"],
+        ["F2","G-FIN","group","read",True,"public","2025-01-02T09:00:00"],
+        ["F2","U2","user","owner",False,"internal","2024-12-01T09:00:00"],
+        ["F3","G-ENG","group","read",False,"internal","2024-11-01T09:00:00"],
+        ["F3","U30","user","write",False,"internal","2024-12-20T09:00:00"],
+        ["F4","LINK","link","read",True,"public","2024-10-01T09:00:00"],
+        ["F5","G-LEGAL","group","read",False,"internal","2024-12-20T12:00:00"],
+        ["F5","U55","user","owner",False,"internal","2024-12-20T12:10:00"],
+    ], columns=["file_id","principal_id","principal_type","access_level","is_public_link","link_scope","created_ts"])
+    acl["created_ts"] = pd.to_datetime(acl["created_ts"])
+
+    fe = pd.DataFrame([
+        ["2025-01-05T10:00:00","U10","F1","download",10240,"10.0.0.5","D1","US","web",True],
+        ["2025-01-05T10:05:00","U10","F1","download",20480,"10.0.0.5","D1","US","web",True],
+        ["2025-01-06T22:30:00","U30","F3","download",5120,"10.0.0.6","D2","US","web",False],
+        ["2025-01-06T23:45:00","U99","F2","download",4096,"10.0.0.7","D3","US","web",False],
+        ["2025-01-07T01:15:00","U99","F2","download",4096,"10.0.0.7","D3","US","web",False],
+    ], columns=["event_ts","user_id","file_id","event_type","bytes","src_ip","device_id","location","channel","device_managed"])
+    fe["event_ts"] = pd.to_datetime(fe["event_ts"])
+
+    ss = pd.DataFrame([
+        ["F2","2025-01-06T09:00:00","hash_mismatch","true"],
+        ["F3","2025-01-03T12:00:00","macro_present","true"],
+        ["F1","2025-01-04T12:00:00","dlp_hit","SSN"],
+    ], columns=["file_id","signal_ts","signal_type","signal_value"])
+    ss["signal_ts"] = pd.to_datetime(ss["signal_ts"])
+
+    bc = pd.DataFrame([
+        ["sharepoint","P1","daily",1440,120,"2025-01-07T00:30:00"],
+        ["onedrive","P2","daily",1440,120,"2025-01-02T00:30:00"],
+        ["box","P3","weekly",10080,180,"2024-12-20T00:30:00"],
+    ], columns=["system","policy_id","frequency","rpo_minutes","rto_minutes","last_successful_backup"])
+    bc["last_successful_backup"] = pd.to_datetime(bc["last_successful_backup"])
+
+    ac = pd.DataFrame([
+        ["sharepoint",True,180,0],
+        ["onedrive",False,30,3],
+        ["box",True,60,1],
+    ], columns=["system","audit_enabled","retention_days","gaps_last_30d"])
+
+    ub = pd.DataFrame([["U10",5],["U30",4],["U99",2]], columns=["user_id","weekly_download_p95"])
+    pc = pd.DataFrame([["U99","2025-01-06T21:00:00"]], columns=["user_id","click_ts"])
+    pc["click_ts"] = pd.to_datetime(pc["click_ts"])
+
+    return {
+        "file_catalog": fc, "acl": acl, "file_events": fe, "security_signals": ss,
+        "backup_coverage": bc, "audit_config": ac, "user_baseline": ub, "phish_click_events": pc
+    }
+
 # --- Recommended action mapping & builder ---
 def _action_for_rule(rule: str) -> tuple[str, list[str]]:
     mapping = {
@@ -205,7 +269,6 @@ def _action_for_rule(rule: str) -> tuple[str, list[str]]:
     }
     return mapping.get(rule, ("Review context", ["Investigate", "Document findings"]))
 
-
 def _priority_from_score(score: float, red: float, amber: float) -> str:
     if pd.isna(score):
         return "P3 - Low"
@@ -215,16 +278,25 @@ def _priority_from_score(score: float, red: float, amber: float) -> str:
         return "P2 - Medium"
     return "P3 - Low"
 
-
 def build_action_df(det_df: pd.DataFrame, data: dict, file_scores: pd.DataFrame, red: float, amber: float) -> pd.DataFrame:
     if det_df.empty:
         return pd.DataFrame()
 
-    # context (owner/system/classification) & scores
-   fc = data.get("file_catalog")
-if fc is None:
-    fc = pd.DataFrame()
+    # Context (owner/system/classification) & scores
+    fc = data.get("file_catalog", pd.DataFrame())
+    if not fc.empty and "file_id" in fc.columns:
+        base_cols = ["file_id", "owner_user_id", "system", "classification"]
+        present = [c for c in base_cols if c in fc.columns]
+        ctx = fc[present].drop_duplicates()
+        # Ensure all expected columns exist
+        missing = set(base_cols) - set(ctx.columns)
+        for m in missing:
+            ctx[m] = None
+        ctx = ctx[base_cols]
+    else:
+        ctx = pd.DataFrame(columns=["file_id", "owner_user_id", "system", "classification"])
 
+    fs = file_scores.set_index("file_id")["score"] if not file_scores.empty else pd.Series(dtype=float)
 
     rows = []
     for _, r in det_df.iterrows():
@@ -232,10 +304,14 @@ if fc is None:
         rule = r.get("rule")
         base = r.get("base")
         cls = r.get("classification")
-        score = float(fs.get(fid, np.nan))  # safe if NaN
+        score = float(fs.get(fid, np.nan))
         priority = _priority_from_score(score, red, amber)
 
-        c = ctx[ctx["file_id"] == fid].iloc[0] if not ctx.empty and (ctx["file_id"] == fid).any() else pd.Series({"owner_user_id": None, "system": None, "classification": cls})
+        if not ctx.empty and (ctx["file_id"] == fid).any():
+            c = ctx[ctx["file_id"] == fid].iloc[0]
+        else:
+            c = pd.Series({"owner_user_id": None, "system": None, "classification": cls})
+
         action, steps = _action_for_rule(rule)
 
         rows.append({
@@ -248,12 +324,12 @@ if fc is None:
             "classification": c.get("classification"),
             "base_severity": base,
             "computed_score": score,
-            "steps": " • ".join(steps),  # nice in-grid view
+            "steps": " • ".join(steps),
         })
-    df = pd.DataFrame(rows).sort_values(["priority", "computed_score"], ascending=[True, False])
-    # Stable priority sort order
-    cat = pd.Categorical(df["priority"], ["P1 - High","P2 - Medium","P3 - Low"], ordered=True)
-    df = df.assign(priority=cat).sort_values(["priority","computed_score"], ascending=[True, False]).reset_index(drop=True)
+
+    df = pd.DataFrame(rows)
+    df["priority"] = pd.Categorical(df["priority"], ["P1 - High", "P2 - Medium", "P3 - Low"], ordered=True)
+    df = df.sort_values(["priority", "computed_score"], ascending=[True, False]).reset_index(drop=True)
     return df
 
 # ---------- Sidebar ----------
@@ -288,8 +364,22 @@ base_sev = {
 rag_red = st.sidebar.slider("RAG RED threshold", 50, 100, 80)
 rag_amber = st.sidebar.slider("RAG AMBER threshold", 30, 90, 50)
 
+# --- Demo toggle & debug ---
+st.sidebar.header("Demo")
+use_demo = st.sidebar.toggle("Use built-in demo data", value=True)
+st.sidebar.caption(f"DATA_DIR: {DATA_DIR}")
+try:
+    found = ", ".join([p.name for p in DATA_DIR.glob("*.csv")])
+    st.sidebar.caption("Found CSVs: " + (found if found else "none"))
+except Exception:
+    pass
+if st.sidebar.button("Clear cache"):
+    st.cache_data.clear()
+
 # ---------- Load & preview ----------
 data = ensure_types(load_all_sources(uploads))
+if use_demo:
+    data = ensure_types(build_demo_data())
 
 with st.expander("Preview data (head)"):
     for k, v in data.items():
@@ -368,8 +458,7 @@ if not data["security_signals"].empty:
         )
         has_unmanaged = um
     for fid in macro["file_id"].unique():
-        # conservative: treat as unmanaged if unknown
-        if bool(has_unmanaged.reindex([fid]).fillna(True).iloc[0]):
+        if bool(has_unmanaged.reindex([fid]).fillna(True).iloc[0]):  # conservative default
             detections.append({
                 "file_id": fid,
                 "rule": "macro_external",
@@ -380,7 +469,7 @@ if not data["security_signals"].empty:
 # R7: unencrypted at rest on sensitive
 if not data["file_catalog"].empty and "encryption_at_rest" in data["file_catalog"].columns:
     unenc = data["file_catalog"]
-    unenc = unenc[(~unenc["encryption_at_rest"]) & (unenc["classification"].isin(["Confidential", "Restricted"]))]
+    unenc = unenc[(~unenc["encryption_at_rest"]) & (unenc["classification"].isin(["Confidential", "Restricted"]))]  # noqa: E712
     for fid in unenc["file_id"].unique():
         detections.append({
             "file_id": fid,
@@ -470,7 +559,7 @@ if not data["file_catalog"].empty and "retention_days_exceeded" in data["file_ca
 # R13: soft-delete > 30d on sensitive
 if not data["file_catalog"].empty and {"deleted_soft", "days_deleted", "classification"}.issubset(set(data["file_catalog"].columns)):
     sd = data["file_catalog"]
-    bad = sd[(sd["deleted_soft"] == True) & (sd["days_deleted"] >= 30) & (sd["classification"].isin(["Confidential", "Restricted"]))]
+    bad = sd[(sd["deleted_soft"] == True) & (sd["days_deleted"] >= 30) & (sd["classification"].isin(["Confidential", "Restricted"]))]  # noqa: E712
     for fid in bad["file_id"].unique():
         detections.append({
             "file_id": fid,
@@ -510,7 +599,7 @@ tabs = st.tabs(["Upload & Preview", "Detections", "Risk Scores", "Dashboards", "
 
 with tabs[0]:
     st.subheader("Upload or use sample CSVs")
-    st.write("If you don’t upload files, the app uses the sample data in `/data`.")
+    st.write("If you don’t upload files, the app uses the sample data in `/data`. Toggle **Demo** to inject built-in sample data.")
     for k, v in data.items():
         with st.expander(f"{k}.csv preview", expanded=False):
             st.dataframe(v.head(20), use_container_width=True)
@@ -518,7 +607,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Detections")
     if det_df.empty:
-        st.info("No detections yet. Provide data or use the sample CSVs in `/data`.")
+        st.info("No detections yet. Provide data or use the sample data (Demo toggle).")
     else:
         st.dataframe(
             det_df[["file_id", "rule", "base", "classification", "score_i", "details"]]
@@ -621,7 +710,8 @@ with tabs[6]:
 **Why CSV-only?**  
 - Keeps deployments simple and avoids PyArrow build issues on some Python versions.
 
-**Next steps**  
-- Add enterprise-specific rules, SOAR actions, and direct SIEM connectors.
+**Tip**  
+- The **Demo** toggle overrides uploads and `/data` CSVs while enabled.
 """)
+
 
