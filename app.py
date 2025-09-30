@@ -221,9 +221,10 @@ def build_action_df(det_df: pd.DataFrame, data: dict, file_scores: pd.DataFrame,
         return pd.DataFrame()
 
     # context (owner/system/classification) & scores
-    fc = (data.get("file_catalog") or pd.DataFrame())
-    ctx = fc[["file_id", "owner_user_id", "system", "classification"]].drop_duplicates() if not fc.empty else pd.DataFrame(columns=["file_id","owner_user_id","system","classification"])
-    fs = file_scores.set_index("file_id")["score"] if not file_scores.empty else pd.Series(dtype=float)
+   fc = data.get("file_catalog")
+if fc is None:
+    fc = pd.DataFrame()
+
 
     rows = []
     for _, r in det_df.iterrows():
