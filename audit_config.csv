@@ -1,0 +1,4 @@
+system,audit_enabled,retention_days,gaps_last_30d
+sharepoint,True,180,0
+onedrive,False,30,3
+box,True,60,1

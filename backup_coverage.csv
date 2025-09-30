@@ -1,0 +1,4 @@
+system,policy_id,frequency,rpo_minutes,rto_minutes,last_successful_backup
+sharepoint,P1,daily,1440,120,2025-01-07T00:30:00
+onedrive,P2,daily,1440,120,2025-01-02T00:30:00
+box,P3,weekly,10080,180,2024-12-20T00:30:00

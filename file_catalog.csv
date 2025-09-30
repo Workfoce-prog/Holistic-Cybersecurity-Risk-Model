@@ -1,0 +1,6 @@
+file_id,path,owner_user_id,system,created_ts,last_modified_ts,classification,encryption_at_rest,retention_days_exceeded,deleted_soft,days_deleted
+F1,/hr/salary.xlsx,U1,sharepoint,2024-12-15T10:00:00,2025-01-05T09:00:00,Restricted,False,False,False,0
+F2,/finance/budget.xlsx,U2,sharepoint,2024-12-01T09:00:00,2025-01-06T11:00:00,Confidential,False,False,False,0
+F3,/eng/roadmap.docx,U3,onedrive,2024-11-01T09:00:00,2025-01-03T14:00:00,Internal,True,False,False,0
+F4,/public/press.pdf,U4,sharepoint,2024-10-01T09:00:00,2025-01-04T08:00:00,Public,True,False,False,0
+F5,/legal/case.pdf,U5,box,2024-12-20T12:00:00,2025-01-06T12:00:00,Confidential,False,True,True,35
