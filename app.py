@@ -235,7 +235,7 @@ if not data["security_signals"].empty:
 # R7: unencrypted at rest on sensitive
 if not data["file_catalog"].empty and "encryption_at_rest" in data["file_catalog"].columns:
     unenc = data["file_catalog"]
-    unenc = unenc[(~unenc["encryption_at_rest"]) & (unenc["classification"].isin(["Confidential", "Restricted"])))]
+    unenc = unenc[(~unenc["encryption_at_rest"]) & (unenc["classification"].isin(["Confidential", "Restricted"]))]
     for fid in unenc["file_id"].unique():
         detections.append({
             "file_id": fid,
