@@ -482,14 +482,20 @@ if not data["file_catalog"].empty and "encryption_at_rest" in data["file_catalog
 if not data["backup_coverage"].empty:
     bc = data["backup_coverage"].copy()
     if "last_successful_backup" in bc.columns:
-       bc["last_successful_backup"] = pd.to_datetime(bc["last_successful_backup"], errors="coerce", utc=True)
-now = pd.Timestamp.now(tz="UTC")
-    if "rpo_minutes" in bc.columns:
+        bc["last_successful_backup"] = pd.to_datetime(
+            bc["last_successful_backup"], errors="coerce", utc=True
+        )
+    now = pd.Timestamp.now(tz="UTC")
+
+    if "rpo_minutes" in bc.columns and "last_successful_backup" in bc.columns:
         bc["age_min"] = (now - bc["last_successful_backup"]).dt.total_seconds() / 60.0
         breach = bc[bc["age_min"] > bc["rpo_minutes"]]
+
         for _, row in breach.iterrows():
             if not data["file_catalog"].empty:
-                affected = data["file_catalog"][data["file_catalog"]["system"] == row["system"]]["file_id"].unique()
+                affected = data["file_catalog"][
+                    data["file_catalog"]["system"] == row["system"]
+                ]["file_id"].unique()
                 for fid in affected:
                     detections.append({
                         "file_id": fid,
