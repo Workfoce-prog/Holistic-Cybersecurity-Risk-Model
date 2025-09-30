@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -110,6 +109,151 @@ def rag_label(x: float, red: float, amber: float) -> str:
     if x >= amber:
         return "Amber"
     return "Green"
+
+# --- Recommended action mapping & builder ---
+def _action_for_rule(rule: str) -> tuple[str, list[str]]:
+    mapping = {
+        "public_link_sensitive": (
+            "Revoke public link & notify owner",
+            [
+                "Immediately revoke public/anonymous link",
+                "Switch to internal, least-privilege sharing",
+                "Notify file owner and data protection team",
+                "Create DLP exception (if justified) with expiry"
+            ],
+        ),
+        "broad_groups": (
+            "Tighten ACLs (principle of least privilege)",
+            [
+                "Remove unused groups / excessive members",
+                "Require access justification & expiry",
+                "Enable sharing link expiry and audience limits"
+            ],
+        ),
+        "stale_write_access": (
+            "Remove inactive write/owner access",
+            [
+                "Revoke write where no activity in last 180d",
+                "Move to Just-In-Time (JIT) or time-bound access",
+                "Record exception approvals"
+            ],
+        ),
+        "hash_mismatch": (
+            "Quarantine & restore known-good version",
+            [
+                "Quarantine file; block downloads",
+                "Compare against known-good hash; restore from backup",
+                "Run AV/EDR scan & review recent change history"
+            ],
+        ),
+        "macro_external": (
+            "Block macros & restrict unmanaged access",
+            [
+                "Convert to PDF or strip macros",
+                "Block unmanaged device access for this location",
+                "Hunt for similar files and recipients"
+            ],
+        ),
+        "unencrypted_sensitive": (
+            "Enable encryption-at-rest / move to compliant store",
+            [
+                "Enable KMS-backed encryption",
+                "Migrate file to approved repository",
+                "Apply/verify sensitivity label & retention"
+            ],
+        ),
+        "backup_gap": (
+            "Trigger backup & fix RPO policy",
+            [
+                "Run ad-hoc backup for affected system",
+                "Investigate last failures; adjust schedule/alerts",
+                "Verify restore test completes"
+            ],
+        ),
+        "audit_disabled": (
+            "Enable audit logs & extend retention",
+            [
+                "Enable unified audit for the system",
+                "Forward to SIEM; set retention ≥ 90 days",
+                "Backfill gaps if possible"
+            ],
+        ),
+        "post_phish_surge": (
+            "Contain account & investigate exfil",
+            [
+                "Force password reset and revoke sessions",
+                "Temporarily restrict external sharing",
+                "Review downloads during 48h window; notify IR"
+            ],
+        ),
+        "retention_violation": (
+            "Apply retention/hold and remediate",
+            [
+                "Place legal/records hold if required",
+                "Archive or delete per policy",
+                "Document remediation in ticket"
+            ],
+        ),
+        "soft_delete_sensitive": (
+            "Restore or purge per policy",
+            [
+                "If deletion was accidental, restore and secure",
+                "If intended, verify purge meets retention rules",
+                "Notify data owner & records management"
+            ],
+        ),
+    }
+    return mapping.get(rule, ("Review context", ["Investigate", "Document findings"]))
+
+
+def _priority_from_score(score: float, red: float, amber: float) -> str:
+    if pd.isna(score):
+        return "P3 - Low"
+    if score >= red:
+        return "P1 - High"
+    if score >= amber:
+        return "P2 - Medium"
+    return "P3 - Low"
+
+
+def build_action_df(det_df: pd.DataFrame, data: dict, file_scores: pd.DataFrame, red: float, amber: float) -> pd.DataFrame:
+    if det_df.empty:
+        return pd.DataFrame()
+
+    # context (owner/system/classification) & scores
+    fc = (data.get("file_catalog") or pd.DataFrame())
+    ctx = fc[["file_id", "owner_user_id", "system", "classification"]].drop_duplicates() if not fc.empty else pd.DataFrame(columns=["file_id","owner_user_id","system","classification"])
+    fs = file_scores.set_index("file_id")["score"] if not file_scores.empty else pd.Series(dtype=float)
+
+    rows = []
+    for _, r in det_df.iterrows():
+        fid = r.get("file_id")
+        rule = r.get("rule")
+        base = r.get("base")
+        cls = r.get("classification")
+        score = float(fs.get(fid, np.nan))  # safe if NaN
+        priority = _priority_from_score(score, red, amber)
+
+        c = ctx[ctx["file_id"] == fid].iloc[0] if not ctx.empty and (ctx["file_id"] == fid).any() else pd.Series({"owner_user_id": None, "system": None, "classification": cls})
+        action, steps = _action_for_rule(rule)
+
+        rows.append({
+            "priority": priority,
+            "file_id": fid,
+            "rule": rule,
+            "recommended_action": action,
+            "owner": c.get("owner_user_id"),
+            "system": c.get("system"),
+            "classification": c.get("classification"),
+            "base_severity": base,
+            "computed_score": score,
+            "steps": " • ".join(steps),  # nice in-grid view
+        })
+    df = pd.DataFrame(rows).sort_values(["priority", "computed_score"], ascending=[True, False])
+    # Stable priority sort order
+    cat = pd.Categorical(df["priority"], ["P1 - High","P2 - Medium","P3 - Low"], ordered=True)
+    df = df.assign(priority=cat).sort_values(["priority","computed_score"], ascending=[True, False]).reset_index(drop=True)
+    return df
 
 # ---------- Sidebar ----------
 st.sidebar.header("Upload CSVs (optional — sample data used if empty)")
@@ -357,8 +501,11 @@ if not file_scores.empty and not data["acl"].empty:
     us = owners.merge(file_scores, on="file_id", how="left")
     user_scores = us.groupby("user_id")["score"].mean().reset_index().sort_values("score", ascending=False)
 
+# ---------- Build Actions ----------
+actions_df = build_action_df(det_df, data, file_scores, rag_red, rag_amber)
+
 # ---------- UI Tabs ----------
-tabs = st.tabs(["Upload & Preview", "Detections", "Risk Scores", "Dashboards", "Downloads", "About"])
+tabs = st.tabs(["Upload & Preview", "Detections", "Risk Scores", "Dashboards", "Actions", "Downloads", "About"])
 
 with tabs[0]:
     st.subheader("Upload or use sample CSVs")
@@ -426,6 +573,33 @@ with tabs[3]:
             st.dataframe(pub, use_container_width=True)
 
 with tabs[4]:
+    st.subheader("Recommended Actions")
+    if actions_df.empty:
+        st.info("No detections → no actions to recommend.")
+    else:
+        st.dataframe(
+            actions_df[
+                ["priority","file_id","rule","recommended_action","owner","system","classification","computed_score","steps"]
+            ],
+            use_container_width=True,
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            st.download_button(
+                "Download action plan (CSV)",
+                actions_df.to_csv(index=False),
+                "action_plan.csv",
+                "text/csv",
+            )
+        with c2:
+            st.download_button(
+                "Download action plan (JSON)",
+                actions_df.to_json(orient="records", indent=2).encode("utf-8"),
+                "action_plan.json",
+                "application/json",
+            )
+
+with tabs[5]:
     st.subheader("Download results")
     if not det_df.empty:
         st.download_button("Download detections CSV", det_df.to_csv(index=False), "detections.csv", "text/csv")
@@ -434,7 +608,7 @@ with tabs[4]:
     if not user_scores.empty:
         st.download_button("Download user scores CSV", user_scores.to_csv(index=False), "user_scores.csv", "text/csv")
 
-with tabs[5]:
+with tabs[6]:
     st.subheader("About")
     st.markdown("""
 **What this app does**  
@@ -449,3 +623,4 @@ with tabs[5]:
 **Next steps**  
 - Add enterprise-specific rules, SOAR actions, and direct SIEM connectors.
 """)
+
