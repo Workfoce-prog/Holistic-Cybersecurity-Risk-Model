@@ -332,6 +332,77 @@ def build_action_df(det_df: pd.DataFrame, data: dict, file_scores: pd.DataFrame,
     df = df.sort_values(["priority", "computed_score"], ascending=[True, False]).reset_index(drop=True)
     return df
 
+# --- Scoring explainer helper ---
+def scoring_explainer_ui(det_df: pd.DataFrame, file_scores: pd.DataFrame, rag_red: float, rag_amber: float) -> None:
+    if file_scores.empty:
+        st.info("No scores computed yet.")
+        return
+
+    opts = file_scores.sort_values("score", ascending=False)["file_id"].astype(str).tolist()
+    fid = st.selectbox("Choose a file to explain", opts, index=0)
+    if not fid:
+        return
+
+    rows = det_df[det_df["file_id"].astype(str) == fid].copy()
+    if rows.empty:
+        st.warning("This file has a score but no visible detection rows.")
+        return
+
+    cols_present = [c for c in ["rule","base","classification","sens_mult","ctx_mult","score_i","details"] if c in rows.columns]
+    rows = rows[cols_present].sort_values("score_i", ascending=False)
+
+    s = rows["score_i"] / 100.0
+    prod = float(np.prod(1.0 - s))
+    combined = round((1.0 - prod) * 100.0, 1)
+    rag = rag_label(combined, rag_red, rag_amber)
+
+    st.markdown(f"### Final file score: **{combined}** → **{rag}**")
+    with st.expander("See detection contributions (per-rule)", expanded=True):
+        nice = rows.rename(columns={
+            "rule":"Rule","base":"Base","classification":"Class",
+            "sens_mult":"Sens×","ctx_mult":"Ctx×","score_i":"score_i (0–100)","details":"Details"
+        })
+        st.dataframe(nice, use_container_width=True)
+
+    terms = " × ".join([f"(1−{x:.2f})" for x in s])
+    st.markdown(
+        "**How it’s computed**  \n"
+        "Per detection: `score_i = clip_0–100(base × sens_mult × ctx_mult)`  \n"
+        "Aggregate (Noisy-OR): `FileScore = 1 − Π(1 − score_i/100)`  \n"
+        f"Here: `1 − Π(1 − score_i/100)` = `1 − {terms}` = `{1 - prod:.3f}` → `{combined}`"
+    )
+
+    if "score_i" in rows.columns and "rule" in rows.columns:
+        if HAVE_PLOTLY:
+            fig = px.bar(rows, x="rule", y="score_i",
+                         hover_data=["details"] if "details" in rows.columns else None,
+                         title="Detection contributions (score_i)")
+            fig.update_layout(xaxis_title=None, yaxis_title="score_i (0–100)")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.bar_chart(rows.set_index("rule")["score_i"])
+
+# --- Capabilities helper (Endpoint, Threat Intel, SecOps, Cloud) ---
+def capabilities_ui():
+    st.subheader("Operational Alignment")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("### 🔒 Endpoint Security")
+        st.markdown("- Configuration Assessment  \n- Malware Detection  \n- File Integrity Monitoring (FIM)")
+        st.caption("Feeds: security_signals (hash_mismatch), file_events (device_managed)")
+    with c2:
+        st.markdown("### 🧠 Threat Intelligence")
+        st.markdown("- Threat Hunting  \n- Log Data Analysis  \n- Vulnerability Detection")
+        st.caption("Feeds: context multiplier / enrichment for detections")
+    with c3:
+        st.markdown("### ⚙️ Security Operations")
+        st.markdown("- Incident Response  \n- Regulatory Compliance  \n- IT Hygiene")
+        st.caption("Uses: recommended actions → tickets/SOAR, audit_config")
+    with c4:
+        st.markdown("### ☁️ Cloud Security")
+        st.markdown("- Container Security  \n- Posture Management  \n- Workload Protection")
+        st.caption("Feeds: backup_coverage, audit_config, system posture")
+
 # ---------- Sidebar ----------
 st.sidebar.header("Upload CSVs (optional — sample data used if empty)")
 uploads = {}
@@ -601,7 +672,10 @@ if not file_scores.empty and not data["acl"].empty:
 actions_df = build_action_df(det_df, data, file_scores, rag_red, rag_amber)
 
 # ---------- UI Tabs ----------
-tabs = st.tabs(["Upload & Preview", "Detections", "Risk Scores", "Dashboards", "Actions", "Downloads", "About"])
+tabs = st.tabs([
+    "Upload & Preview", "Detections", "Risk Scores",
+    "Dashboards", "Actions", "Downloads", "Capabilities", "About"
+])
 
 with tabs[0]:
     st.subheader("Upload or use sample CSVs")
@@ -642,6 +716,11 @@ with tabs[2]:
                     st.bar_chart(rag_counts.set_index("RAG"))
         st.markdown("**User roll-up**")
         st.dataframe(user_scores.head(50), use_container_width=True)
+
+        # --- Scoring explainer ---
+        st.markdown("---")
+        st.markdown("### Scoring explainer")
+        scoring_explainer_ui(det_df, file_scores, rag_red, rag_amber)
 
 with tabs[3]:
     st.subheader("Dashboards")
@@ -705,6 +784,9 @@ with tabs[5]:
         st.download_button("Download user scores CSV", user_scores.to_csv(index=False), "user_scores.csv", "text/csv")
 
 with tabs[6]:
+    capabilities_ui()
+
+with tabs[7]:
     st.subheader("About")
     st.markdown("""
 **What this app does**  
